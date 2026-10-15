@@ -2,7 +2,7 @@
   "name": "cuelight",
   "displayName": "Cuelight",
   "description": "Colors the title bar from the project name and tells the Cuelight menu bar app which windows are open.",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "publisher": "louisbadr",
   "icon": "icon.png",
   "license": "MIT",
