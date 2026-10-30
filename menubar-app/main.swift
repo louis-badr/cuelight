@@ -1,7 +1,7 @@
 // Cuelight menu bar app.
-// One colored circle per open VS Code window, showing Claude Code's state there.
-// The same binary is also the Claude Code hook (`Cuelight hook`), and installs itself on launch
-// (hooks in ~/.claude/settings.json, VS Code extension). Build: ./build.sh
+// One colored circle per open VS Code window, showing Claude Code or Codex's state there.
+// The same binary is also the agent hook (`Cuelight hook <agent>`), and installs itself on launch
+// (hooks in ~/.claude/settings.json and ~/.codex/hooks.json, VS Code extension). Build: ./build.sh
 import AppKit
 import CryptoKit
 
@@ -21,20 +21,20 @@ let isoFormatter: ISO8601DateFormatter = {
     return f
 }()
 
-// MARK: - Hook mode: called by Claude Code with the event JSON on stdin
+// MARK: - Hook mode: called by Claude Code or Codex with the event JSON on stdin
 
-/// Writes ~/.cuelight/sessions/<session_id>.json. Never prints, always exits 0.
-func runHook() -> Never {
+/// Writes ~/.cuelight/sessions/<agent>-<session_id>.json. Never prints, always exits 0.
+func runHook(agent: String) -> Never {
     let input = FileHandle.standardInput.readDataToEndOfFile()
     guard let event = (try? JSONSerialization.jsonObject(with: input)) as? [String: Any],
           let session = event["session_id"] as? String, !session.isEmpty, !session.contains("/") else { exit(0) }
     let dir = stateDir.appendingPathComponent("sessions")
-    let file = dir.appendingPathComponent("\(session).json")
+    let file = dir.appendingPathComponent("\(agent)-\(session).json")
 
     let state: String
     switch event["hook_event_name"] as? String {
     case "SessionStart": state = "idle"
-    case "Stop", "StopFailure": state = "done"
+    case "Stop", "StopFailure", "Interrupt": state = "done"
     case "UserPromptSubmit", "PreToolUse", "PostToolUse", "SubagentStart": state = "working"
     case "PermissionRequest": state = "waiting"
     case "Notification":
@@ -47,21 +47,26 @@ func runHook() -> Never {
     default: exit(0)
     }
 
-    let record: [String: Any] = ["state": state, "updatedAt": isoFormatter.string(from: Date()), "pid": ProcessInfo.processInfo.environment["CLAUDE_PID"] ?? "", "event": event]
+    let record: [String: Any] = ["agent": agent, "state": state, "updatedAt": isoFormatter.string(from: Date()), "pid": agent == "claude" ? ProcessInfo.processInfo.environment["CLAUDE_PID"] ?? "" : "", "event": event]
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     if let data = try? JSONSerialization.data(withJSONObject: record) { try? data.write(to: file, options: .atomic) }
     exit(0)
 }
 
-if CommandLine.arguments.dropFirst().first == "hook" { runHook() }
+if CommandLine.arguments.dropFirst().first == "hook" {
+    let agent = CommandLine.arguments.dropFirst(2).first == "codex" ? "codex" : "claude"
+    runHook(agent: agent)
+}
 
 // MARK: - Setup: run at every launch, does nothing when everything is already in place
 
 let bundleID = "com.louisbadr.cuelight"
 let hookLink = stateDir.appendingPathComponent("bin/cuelight")
-let hookMarker = ".cuelight/bin/cuelight hook"   // identifies our entries in ~/.claude/settings.json
-let hookEvents = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse",
-                  "PermissionRequest", "Notification", "SubagentStart", "Stop", "StopFailure"]
+let hookMarker = ".cuelight/bin/cuelight hook"   // identifies our entries in both agents' config files
+let claudeHookEvents = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+                        "PermissionRequest", "Notification", "SubagentStart", "Stop", "StopFailure"]
+let codexHookEvents = ["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse",
+                       "PermissionRequest", "SubagentStart", "Stop", "Interrupt"]
 let eventsWithMatcher: Set = ["PreToolUse", "PostToolUse", "PermissionRequest"]
 
 func log(_ message: String) { FileHandle.standardError.write(Data("Cuelight: \(message)\n".utf8)) }
@@ -69,12 +74,14 @@ func log(_ message: String) { FileHandle.standardError.write(Data("Cuelight: \(m
 func setUp() {
     linkHookBinary()
     updateClaudeHooks(install: true)
+    updateCodexHooks(install: true)
     installVSCodeExtension()
 }
 
 /// `Cuelight uninstall` (called by install.sh --uninstall): removes our hooks and the VS Code extension.
 func uninstall() -> Never {
     updateClaudeHooks(install: false)
+    updateCodexHooks(install: false)
     if let cli = vscodeCLI() {
         let p = Process()
         p.executableURL = cli
@@ -107,9 +114,13 @@ func updateClaudeHooks(install: Bool) {
         }
         settings = parsed
     }
-    var hooks = settings["hooks"] as? [String: Any] ?? [:]
-    let command = "~/\(hookMarker) 2>/dev/null || true"   // never fails, even if the app was deleted
-    for event in hookEvents {
+    let hooksValue = settings["hooks"]
+    guard hooksValue == nil || hooksValue is [String: Any] else {
+        log("unexpected hooks value, Claude hooks not installed"); return
+    }
+    var hooks = hooksValue as? [String: Any] ?? [:]
+    let command = "~/\(hookMarker) claude 2>/dev/null || true"   // never fails, even if the app was deleted
+    for event in claudeHookEvents {
         guard let groups = (hooks[event] ?? []) as? [[String: Any]] else { log("unexpected hooks.\(event), hooks not installed"); return }
         let others = groups.filter { group in
             !((group["hooks"] as? [[String: Any]]) ?? []).contains { ($0["command"] as? String)?.contains(hookMarker) == true }
@@ -134,6 +145,47 @@ func updateClaudeHooks(install: Bool) {
     } catch { log("settings write: \(error)") }
 }
 
+/// Merges our hooks into ~/.codex/hooks.json (or removes them), after a backup. Other hooks are left untouched.
+func updateCodexHooks(install: Bool) {
+    let url = home.appendingPathComponent(".codex/hooks.json")
+    var root: [String: Any] = [:]
+    if let data = try? Data(contentsOf: url) {
+        guard let parsed = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            log("~/.codex/hooks.json is not plain JSON, hooks not installed"); return
+        }
+        root = parsed
+    }
+    let hooksValue = root["hooks"]
+    guard hooksValue == nil || hooksValue is [String: Any] else {
+        log("unexpected hooks value, Codex hooks not installed"); return
+    }
+    var hooks = hooksValue as? [String: Any] ?? [:]
+    let command = "~/\(hookMarker) codex 2>/dev/null || true"
+    for event in codexHookEvents {
+        guard let groups = (hooks[event] ?? []) as? [[String: Any]] else { log("unexpected Codex hooks.\(event), hooks not installed"); return }
+        let others = groups.filter { group in
+            !((group["hooks"] as? [[String: Any]]) ?? []).contains { ($0["command"] as? String)?.contains(hookMarker) == true }
+        }
+        var ours: [String: Any] = ["hooks": [["type": "command", "command": command]]]
+        if eventsWithMatcher.contains(event) { ours["matcher"] = "*" }
+        hooks[event] = install ? others + [ours] : (others.isEmpty ? nil : others)
+    }
+    if NSDictionary(dictionary: hooks).isEqual(to: root["hooks"] as? [String: Any] ?? [:]) { return }
+    root["hooks"] = hooks.isEmpty ? nil : hooks
+
+    let fm = FileManager.default
+    if fm.fileExists(atPath: url.path) {
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let backup = url.deletingLastPathComponent().appendingPathComponent("hooks.json.cuelight-backup-\(stamp)")
+        do { try fm.copyItem(at: url, to: backup) } catch { log("Codex hooks backup: \(error)"); return }
+    }
+    do {
+        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+        try data.write(to: url, options: .atomic)
+    } catch { log("Codex hooks write: \(error)") }
+}
+
 /// Installs the bundled .vsix with VS Code's CLI, unless this version is already installed.
 func installVSCodeExtension() {
     guard let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
@@ -155,14 +207,14 @@ func vscodeCLI() -> URL? {
 
 if CommandLine.arguments.dropFirst().first == "uninstall" { uninstall() }
 
-enum ClaudeState: Int { case none = 0, idle, working, done, waiting   // higher = more urgent
+enum AgentState: Int { case none = 0, idle, working, done, waiting   // higher = more urgent
     var label: String {
         switch self {
-        case .none: return "Claude not running"
-        case .idle: return "Claude idle"
-        case .working: return "Claude working"
-        case .done: return "Claude done"
-        case .waiting: return "Claude needs you"
+        case .none: return "No agent running"
+        case .idle: return "Agent idle"
+        case .working: return "Agent working"
+        case .done: return "Agent done"
+        case .waiting: return "Agent needs you"
         }
     }
 }
@@ -209,18 +261,25 @@ func openWindows() -> [ProjectWindow] {
     return result.sorted { $0.openedAt < $1.openedAt }
 }
 
-/// Most urgent Claude state per window id. A session belongs to the window whose path is its cwd's longest prefix.
-func statesByWindow(_ windows: [ProjectWindow]) -> [String: ClaudeState] {
-    var states: [String: ClaudeState] = [:]
+/// Most urgent agent state per window id. A session belongs to the window whose path is its cwd's longest prefix.
+func statesByWindow(_ windows: [ProjectWindow]) -> [String: AgentState] {
+    var states: [String: AgentState] = [:]
     for url in jsonFiles("sessions") {
         guard let json = readJSON(url),
               let event = json["event"] as? [String: Any],
               let cwd = event["cwd"] as? String else { continue }
         if let pid = pidValue(json["pid"]), !isAlive(pid) { try? FileManager.default.removeItem(at: url); continue }
+        // Codex does not expose its host PID to hooks. SessionEnd normally removes the file; this
+        // fallback prevents a crashed client from leaving a light behind forever.
+        if pidValue(json["pid"]) == nil,
+           let updatedAt = (json["updatedAt"] as? String).flatMap(isoFormatter.date(from:)),
+           Date().timeIntervalSince(updatedAt) > 24 * 60 * 60 {
+            try? FileManager.default.removeItem(at: url); continue
+        }
         let owner = windows
             .filter { cwd == $0.path || cwd.hasPrefix($0.path + "/") }
             .max { $0.path.count < $1.path.count }
-        var state: ClaudeState
+        var state: AgentState
         switch json["state"] as? String {
         case "working": state = .working
         case "waiting": state = .waiting
@@ -277,7 +336,7 @@ func colorFor(_ name: String) -> NSColor {
 // macOS adds its own spacing between items.
 let itemWidth: CGFloat = 12
 
-func circleImage(color: NSColor, state: ClaudeState, angle: CGFloat) -> NSImage {
+func circleImage(color: NSColor, state: AgentState, angle: CGFloat) -> NSImage {
     let height: CGFloat = 16, d: CGFloat = 12
     let image = NSImage(size: NSSize(width: itemWidth, height: height), flipped: false) { _ in
         let rect = NSRect(x: (itemWidth - d) / 2, y: (height - d) / 2, width: d, height: d)
@@ -351,7 +410,7 @@ func maximizeFocusedVSCodeWindow() {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     var items: [String: NSStatusItem] = [:]
     var windows: [String: ProjectWindow] = [:]
-    var states: [String: ClaudeState] = [:]
+    var states: [String: AgentState] = [:]
     var tick = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -398,7 +457,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let angle = CGFloat(-(tick * 12) % 360)   // clockwise, one turn per second
         for (id, item) in items {
             guard let w = windows[id] else { continue }
-            let state = states[id] ?? ClaudeState.none
+            let state = states[id] ?? AgentState.none
             if onlyWorking && state != .working { continue }
             item.button?.image = circleImage(color: colorFor(w.name), state: state, angle: angle)
             item.button?.toolTip = "\(w.name) · \(state.label)"
@@ -409,7 +468,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let id = sender.identifier?.rawValue, let w = windows[id] else { return }
         if NSApp.currentEvent?.type == .rightMouseUp {
             let menu = NSMenu()
-            menu.addItem(withTitle: "\(w.name)  ·  \((states[id] ?? ClaudeState.none).label)", action: nil, keyEquivalent: "")
+            menu.addItem(withTitle: "\(w.name)  ·  \((states[id] ?? AgentState.none).label)", action: nil, keyEquivalent: "")
             menu.addItem(.separator())
             let paletteMenu = NSMenu()
             for p in palettes {

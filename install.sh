@@ -1,6 +1,6 @@
 #!/bin/bash
 # Installs Cuelight: builds the menu bar app from source and launches it.
-# The app then installs the Claude Code hooks and the VS Code extension by itself.
+# The app then installs the Claude Code/Codex hooks and the VS Code extension by itself.
 #
 #   curl -fsSL https://raw.githubusercontent.com/louis-badr/cuelight/main/install.sh | bash
 #   curl -fsSL https://raw.githubusercontent.com/louis-badr/cuelight/main/install.sh | bash -s -- --uninstall
@@ -17,7 +17,7 @@ fail() { echo "Cuelight: $*" >&2; exit 1; }
 
 if [ "${1:-}" = "--uninstall" ]; then
   pkill -x Cuelight || true
-  # The app removes its own hooks from ~/.claude/settings.json and the VS Code extension.
+  # The app removes its own hooks from Claude/Codex configuration and the VS Code extension.
   if [ -x "$app/Contents/MacOS/Cuelight" ]; then "$app/Contents/MacOS/Cuelight" uninstall; fi
   rm -rf "$app" "$HOME/.cuelight"
   echo "Cuelight uninstalled."

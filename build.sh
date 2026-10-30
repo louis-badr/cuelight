@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds dist/Cuelight.app. Installs nothing: on first launch, the app installs
-# the Claude Code hooks and the VS Code extension by itself (see README.md).
+# the Claude Code/Codex hooks and the VS Code extension by itself (see README.md).
 set -euo pipefail
 cd "$(dirname "$0")"
 

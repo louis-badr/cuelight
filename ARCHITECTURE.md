@@ -3,7 +3,7 @@
 ## Overview
 
 ```
- VS Code (one window per project)        Claude Code (one or more sessions)
+ VS Code (one window per project)        Claude Code / Codex (one or more sessions)
  ┌───────────────────────────┐           ┌───────────────────────────┐
  │ Cuelight extension        │           │ hooks → Cuelight hook     │
  │  - color = hash(name)     │           └─────────────┬─────────────┘
@@ -37,7 +37,8 @@ This is the contract between the pieces. Change this format here first, then in 
 ├── windows/
 │   └── <window-id>.json      written by the VS Code extension
 ├── sessions/
-│   └── <session-id>.json     written by the Claude Code hooks
+│   └── <agent>-<session-id>.json
+│                              written by Claude Code or Codex hooks
 ├── settings.json             optional, written by the app (chosen palette)
 └── colors.json               optional, written by hand (forced colors)
 ```
@@ -68,22 +69,24 @@ One file per VS Code window open on a folder. No color in it.
 - `lastFocusedAt`: the last moment the window had the focus (updated when it gains and when it loses the focus). Missing if it never had it. Used to tell whether a `done` result was seen.
 - Created when the window opens, rewritten on every focus change, deleted when it closes.
 
-### `sessions/<session-id>.json`
+### `sessions/<agent>-<session-id>.json`
 
-One file per Claude Code session, written by the hook (the app's binary run as `Cuelight hook`, see [docs/claude-hooks.md](docs/claude-hooks.md)).
+One file per Claude Code or Codex session, written by the hook (the app's binary run as `Cuelight hook claude` or `Cuelight hook codex`; see [docs/claude-hooks.md](docs/claude-hooks.md) and [docs/codex-hooks.md](docs/codex-hooks.md)).
 
 ```json
 {
+  "agent": "codex",
   "state": "working",
   "updatedAt": "2026-10-15T11:40:31.204Z",
-  "pid": "52110",
+  "pid": "",
   "event": { "session_id": "…", "cwd": "/Users/me/Projects/my-app", "hook_event_name": "PreToolUse", "…": "…" }
 }
 ```
 
-- `state` ∈ `idle` | `working` | `waiting` | `done`. `done`: Claude finished its turn (`Stop`). `idle`: nothing was asked yet in this session.
+- `state` ∈ `idle` | `working` | `waiting` | `done`. `done`: the agent finished its turn (`Stop`). `idle`: nothing was asked yet in this session.
 - `updatedAt`: when the hook wrote this `state`.
-- `pid`: the Claude Code process (`CLAUDE_PID` environment variable: undocumented, but present, and it is the `claude` binary). Empty string if the variable is missing. The app ignores and deletes the session once this process is gone.
+- `agent`: `claude` or `codex`.
+- `pid`: the Claude Code process when available through `CLAUDE_PID`. Codex does not expose its host PID to hooks, so Codex records use an empty string and are removed by `SessionEnd` (or after 24 hours as crash recovery).
 - `event`: the last event received, as is. The app reads `cwd` from it.
 - Deleted when the session ends (`SessionEnd` hook).
 
@@ -110,12 +113,12 @@ Settings chosen in the app's menu (right-click on a light). Written by the app, 
 
 - `install.sh` (run through `curl … | bash`) downloads the source, calls `build.sh` to make `Cuelight.app` (which embeds the VS Code extension as a `.vsix`), moves it to `~/Applications` and starts it. Run from a clone, it uses the local source.
 - `install.sh --uninstall` runs `Cuelight uninstall` (removes the hooks and the extension), then deletes the app and `~/.cuelight/`.
-- **On every launch**, the app installs whatever is missing: the `~/.cuelight/bin/cuelight` link, the hooks in `~/.claude/settings.json` (backup, then merge), and the VS Code extension (through the `code` CLI, if this version isn't installed yet).
+- **On every launch**, the app installs whatever is missing: the `~/.cuelight/bin/cuelight` link, the hooks in `~/.claude/settings.json` and `~/.codex/hooks.json` (backup, then merge), and the VS Code extension (through the `code` CLI, if this version isn't installed yet). Codex asks the user to review and trust newly installed hooks before running them.
 - **When a VS Code window opens**, the extension starts the app if it isn't running (`open -g -b com.louisbadr.cuelight`).
 
 ## Which lights to show
 
-**One light per file in `windows/`**, that is per open VS Code window. A Claude session with no matching VS Code window (terminal only) gets no light.
+**One light per file in `windows/`**, that is per open VS Code window. An agent session with no matching VS Code window (terminal only) gets no light.
 
 ## Matching a session to a window
 
@@ -123,7 +126,7 @@ A session's `cwd` can be a subfolder of the project. The app matches each sessio
 
 ## State of a light
 
-- No matching session: *no Claude* (drawn differently from `idle`, see [docs/menubar-app.md](docs/menubar-app.md)).
+- No matching session: *no agent* (drawn differently from `idle`, see [docs/menubar-app.md](docs/menubar-app.md)).
 - Otherwise, the most urgent state among its sessions: `waiting` > `done` > `working` > `idle`.
 - A `done` session counts as `idle` once its result was seen: the window has the focus (`focused`), or had it after the turn ended (`lastFocusedAt` ≥ the session's `updatedAt`). Clicking the light focuses the window, so it marks the result as seen.
 

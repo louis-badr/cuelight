@@ -7,7 +7,7 @@
 3. When the window closes: delete that file.
 4. Start the menu bar app if it isn't running (`open -g -b com.louisbadr.cuelight`; `-g` keeps it in the background, and nothing happens if it is already running or not installed).
 
-Nothing else. The extension knows nothing about Claude.
+Nothing else. The extension knows nothing about Claude Code or Codex.
 
 ## Activation
 

@@ -2,7 +2,7 @@
 
 ## Role
 
-Show **one light per open VS Code window**, in the project's color, reflecting Claude's state in that project. On click, bring the right VS Code window to the front and make it fill the screen.
+Show **one light per open VS Code window**, in the project's color, reflecting the most urgent Claude Code or Codex state in that project. On click, bring the right VS Code window to the front and make it fill the screen.
 
 ## Shape
 
@@ -10,13 +10,13 @@ Show **one light per open VS Code window**, in the project's color, reflecting C
 - One `NSStatusItem` per file in `~/.cuelight/windows/`, added or removed as those files appear or disappear. Each one is a separate button, 12 pt wide (the size of the light) instead of the standard square width, so the lights take less room. Don't group them into a single item: the whole button gets highlighted and clicks no longer reach the right light (tried and dropped).
 - Color computed with the algorithm in [color.md](color.md) (same palettes and test vectors as the extension).
 - Started by the VS Code extension when a window opens (`open -g -b com.louisbadr.cuelight`), not at login.
-- The same binary is the Claude Code hook (`Cuelight hook`, see [claude-hooks.md](claude-hooks.md)).
+- The same binary is the Claude Code and Codex hook (`Cuelight hook <agent>`, see [claude-hooks.md](claude-hooks.md) and [codex-hooks.md](codex-hooks.md)).
 
 ## Automatic setup
 
 On every launch, in the background, the app installs whatever is missing (nothing happens if everything is in place):
 1. the `~/.cuelight/bin/cuelight` link to its binary;
-2. the hooks in `~/.claude/settings.json` (backup, then merge: see [claude-hooks.md](claude-hooks.md));
+2. the hooks in `~/.claude/settings.json` and `~/.codex/hooks.json` (backup, then merge; see [claude-hooks.md](claude-hooks.md) and [codex-hooks.md](codex-hooks.md));
 3. the VS Code extension: if `~/.vscode/extensions/louisbadr.cuelight-<version>` doesn't exist, it runs `code --install-extension cuelight.vsix --force` with the `.vsix` embedded in `Contents/Resources`.
 
 A plain link in `~/.vscode/extensions` isn't enough: VS Code keeps a registry (`extensions.json`) and ignores folders dropped there by hand.
@@ -25,7 +25,7 @@ A plain link in `~/.vscode/extensions` isn't enough: VS Code keeps a registry (`
 
 | State | Drawing |
 |---|---|
-| no Claude | empty ring, project color |
+| no agent | empty ring, project color |
 | `idle` | pale disc (project color at 30%): nothing to do |
 | `working` | loading spinner: the pale disc, with an arc turning along its edge (one turn per second, redrawn 30 times a second) |
 | `done` | solid disc, project color: the light is on, a result is waiting to be seen |
@@ -47,7 +47,7 @@ This needs the **Accessibility** permission (System Settings → Privacy & Secur
 **Right click: menu.**
 
 ```
-my-app  ·  Claude needs you
+my-app  ·  Agent needs you
 ─────────────────────────────
 Palette  ▸  Pastel ✓ / Soft / Vivid
 ─────────────────────────────

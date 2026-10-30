@@ -6,7 +6,7 @@ Claude Code's official hook mechanism, configured in `~/.claude/settings.json` (
 
 ## Claude's state
 
-Claude Code runs a command at certain moments and passes it a JSON object on stdin (with `session_id`, `cwd`, `hook_event_name`, among others). One hook handles every event and writes `~/.cuelight/sessions/<session_id>.json`.
+Claude Code runs a command at certain moments and passes it a JSON object on stdin (with `session_id`, `cwd`, `hook_event_name`, among others). One hook handles every event and writes `~/.cuelight/sessions/claude-<session_id>.json`.
 
 Claude Code also exports its process ID to hooks in the **`CLAUDE_PID`** environment variable (undocumented, but checked in practice: it is the `claude` process). The hook writes it to the session file (`pid` field), and the app checks that it is alive: a session whose process is gone is ignored. This is more reliable than a timeout.
 
@@ -26,12 +26,12 @@ Claude Code also exports its process ID to hooks in the **`CLAUDE_PID`** environ
 
 The hooks are **not** declared `"async": true`: in the background, two close events (`PreToolUse` then `PermissionRequest`) could be written out of order. The hook takes a few milliseconds, which is negligible. Note that `SessionEnd` has only 1.5 s for all its hooks.
 
-Implementation: **the app's binary itself**, run in hook mode (`Cuelight hook`, `runHook` in `menubar-app/main.swift`). It parses the JSON with `JSONSerialization` and copies the event into the `event` field. For `Notification`, it simply looks for `idle_prompt` in the raw text, so it doesn't depend on the exact name of the type field. It exits before starting AppKit: about 4 ms per call.
+Implementation: **the app's binary itself**, run in hook mode (`Cuelight hook claude`, `runHook` in `menubar-app/main.swift`). It parses the JSON with `JSONSerialization` and copies the event into the `event` field. For `Notification`, it simply looks for `idle_prompt` in the raw text, so it doesn't depend on the exact name of the type field. It exits before starting AppKit: about 4 ms per call.
 
 Command registered in `settings.json` for each event:
 
 ```
-~/.cuelight/bin/cuelight hook 2>/dev/null || true
+~/.cuelight/bin/cuelight hook claude 2>/dev/null || true
 ```
 
 - `~/.cuelight/bin/cuelight` is a link to the app's binary, recreated on every app launch. If the app moves, only the link changes, not `settings.json`.
