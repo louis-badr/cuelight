@@ -6,46 +6,45 @@ A project's color is **computed from its name**, deterministically. The VS Code 
 
 ## Palettes
 
-Instead of a continuous hue over 360°, the hash picks one of **8 fixed colors**. Two projects are therefore either clearly different or identical. A collision is easy to see and fixed with `colors.json`.
+Instead of a continuous hue over 360°, the hash picks one of **5 fixed colors**. Two projects are therefore either clearly different or identical. A collision is easy to see and fixed with `colors.json`.
 
-Three palettes, chosen in the app's menu (right-click on a light) and saved in `~/.cuelight/settings.json` (see ARCHITECTURE.md). All three follow the same order of hues: switching palettes keeps each project's hue and only changes the shade.
+Two palettes, chosen in the app's menu (right-click on a light) and saved in `~/.cuelight/settings.json` (see ARCHITECTURE.md). Both have 5 colors, so switching palettes keeps each project's index; the hues of the two palettes don't match one to one.
 
-| index | Hue | `vivid` | `soft` | `pastel` (default) |
-|---|---|---|---|---|
-| 0 | blue | `#2D5BE3` | `#4E6FAE` | `#9DBDF2` |
-| 1 | green | `#13915F` | `#4E8B6B` | `#97D8B2` |
-| 2 | red | `#D03A3A` | `#B5524F` | `#F2A6A0` |
-| 3 | purple | `#7B3FE4` | `#7D62AE` | `#C6B0F2` |
-| 4 | teal | `#0E8AA0` | `#3F8C99` | `#93D3DD` |
-| 5 | pink | `#C93782` | `#A85A85` | `#F0ABCD` |
-| 6 | orange | `#DD6B20` | `#C07A3E` | `#F6C28E` |
-| 7 | lime | `#5E9E1E` | `#7F8C3F` | `#D2DE92` |
+| index | `vivid` (default) | `pastel` |
+|---|---|---|
+| 0 | `#F72585` | `#CDB4DB` |
+| 1 | `#7209B7` | `#FFC8DD` |
+| 2 | `#3A0CA3` | `#FFAFCC` |
+| 3 | `#4361EE` | `#BDE0FE` |
+| 4 | `#4CC9F0` | `#A2D2FF` |
+
+Sources: [vivid](https://coolors.co/palette/f72585-7209b7-3a0ca3-4361ee-4cc9f0), [pastel](https://coolors.co/palette/cdb4db-ffc8dd-ffafcc-bde0fe-a2d2ff).
 
 The tables are copied as is into `vscode-extension/extension.js` and `menubar-app/main.swift`. **Change all three together**, then recompute the test vectors.
 
-Title bar text: dark `#1D1D22` when the color's relative luminance (WCAG) is above 0.4, white otherwise. So the text is dark with `pastel` and white with the other two, and the rule also covers a color forced in `colors.json`. Inactive window: same color at 70% opacity, text at 60%.
+Title bar text: dark `#1D1D22` when the color's relative luminance (WCAG) is above 0.4, white otherwise. So the text is white with `vivid` except on `#4CC9F0`, dark with `pastel`, and the rule also covers a color forced in `colors.json`. Inactive window: same color at 70% opacity, text at 60%.
 
 ## Algorithm
 
 1. **Project name** = the name of the root folder open in VS Code (last path component), as is (case kept).
 2. If `~/.cuelight/colors.json` has this name, use that color and stop.
 3. `h = SHA-256(name as UTF-8)`.
-4. `index = (h[0] << 24 | h[1] << 16 | h[2] << 8 | h[3]) mod 8` (unsigned integer, big-endian bytes).
-5. Color = `PALETTES[palette][index]`, with `palette` read from `settings.json` (`pastel` by default).
+4. `index = (h[0] << 24 | h[1] << 16 | h[2] << 8 | h[3]) mod 5` (unsigned integer, big-endian bytes).
+5. Color = `PALETTES[palette][index]`, with `palette` read from `settings.json` (`vivid` by default).
 
 ## Test vectors
 
-| Name | index | `vivid` | `soft` | `pastel` |
-|---|---|---|---|---|
-| `my-app` | 4 | `#0E8AA0` | `#3F8C99` | `#93D3DD` |
-| `api-server` | 3 | `#7B3FE4` | `#7D62AE` | `#C6B0F2` |
-| `website` | 1 | `#13915F` | `#4E8B6B` | `#97D8B2` |
-| `dotfiles` | 1 | `#13915F` | `#4E8B6B` | `#97D8B2` |
-| `Notes App` (space) | 6 | `#DD6B20` | `#C07A3E` | `#F6C28E` |
-| `café` (non-ASCII) | 4 | `#0E8AA0` | `#3F8C99` | `#93D3DD` |
+| Name | index | `vivid` | `pastel` |
+|---|---|---|---|
+| `my-app` | 1 | `#7209B7` | `#FFC8DD` |
+| `api-server` | 0 | `#F72585` | `#CDB4DB` |
+| `website` | 3 | `#4361EE` | `#BDE0FE` |
+| `dotfiles` | 0 | `#F72585` | `#CDB4DB` |
+| `Notes App` (space) | 1 | `#7209B7` | `#FFC8DD` |
+| `café` (non-ASCII) | 4 | `#4CC9F0` | `#A2D2FF` |
 
-`website` and `dotfiles` land on the same color: exactly the case `colors.json` fixes.
+`api-server` and `dotfiles` land on the same color: exactly the case `colors.json` fixes.
 
 ## Collisions
 
-With 8 hues, two projects open at the same time share a color fairly often (about 1 in 3 with 3 projects). The fix is `colors.json`. If it happens too often in practice, move to 12 hues.
+With 5 colors, two projects open at the same time share a color often (about 1 in 2 with 3 projects). The fix is `colors.json`. If it happens too often in practice, use larger palettes.

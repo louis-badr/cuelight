@@ -49,7 +49,7 @@ This needs the **Accessibility** permission (System Settings → Privacy & Secur
 ```
 my-app  ·  Agent needs you
 ─────────────────────────────
-Palette  ▸  Pastel ✓ / Soft / Vivid
+Palette  ▸  Vivid ✓ / Pastel
 ─────────────────────────────
 Quit Cuelight
 ```

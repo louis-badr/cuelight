@@ -11,9 +11,8 @@ const crypto = require('crypto');
 
 // Must stay identical to PALETTES in menubar-app/main.swift (see docs/color.md).
 const PALETTES = {
-  vivid: ['#2D5BE3', '#13915F', '#D03A3A', '#7B3FE4', '#0E8AA0', '#C93782', '#DD6B20', '#5E9E1E'],
-  soft: ['#4E6FAE', '#4E8B6B', '#B5524F', '#7D62AE', '#3F8C99', '#A85A85', '#C07A3E', '#7F8C3F'],
-  pastel: ['#9DBDF2', '#97D8B2', '#F2A6A0', '#C6B0F2', '#93D3DD', '#F0ABCD', '#F6C28E', '#D2DE92'],
+  vivid: ['#F72585', '#7209B7', '#3A0CA3', '#4361EE', '#4CC9F0'],
+  pastel: ['#CDB4DB', '#FFC8DD', '#FFAFCC', '#BDE0FE', '#A2D2FF'],
 };
 const STATE_DIR = path.join(os.homedir(), '.cuelight');
 const TITLE_KEYS = ['titleBar.activeBackground', 'titleBar.activeForeground', 'titleBar.inactiveBackground', 'titleBar.inactiveForeground'];
@@ -31,7 +30,7 @@ function readJSON(file) {
 function colorFor(name) {
   const overrides = readJSON(path.join(STATE_DIR, 'colors.json'));
   if (overrides[name]) return overrides[name];
-  const palette = PALETTES[readJSON(SETTINGS_FILE).palette] || PALETTES.pastel;
+  const palette = PALETTES[readJSON(SETTINGS_FILE).palette] || PALETTES.vivid;
   const hash = crypto.createHash('sha256').update(name, 'utf8').digest();
   return palette[hash.readUInt32BE(0) % palette.length];
 }

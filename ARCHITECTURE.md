@@ -103,10 +103,10 @@ Forces a project's color when two projects land on the same one. Read by the ext
 Settings chosen in the app's menu (right-click on a light). Written by the app, read by the extension **and** the app. Missing = defaults.
 
 ```json
-{ "palette": "pastel" }
+{ "palette": "vivid" }
 ```
 
-- `palette` ∈ `vivid` | `soft` | `pastel` (default `pastel`, also used for unknown values). See [docs/color.md](docs/color.md).
+- `palette` ∈ `vivid` | `pastel` (default `vivid`, also used for unknown values, such as the former `soft`). See [docs/color.md](docs/color.md).
 - The extension watches this file and recolors the title bar when it changes.
 
 ## Install and launch

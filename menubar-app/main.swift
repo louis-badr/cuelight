@@ -7,9 +7,8 @@ import CryptoKit
 
 // Must stay identical to PALETTES in vscode-extension/extension.js (see docs/color.md).
 let palettes: [(id: String, label: String, colors: [String])] = [
-    ("pastel", "Pastel", ["#9DBDF2", "#97D8B2", "#F2A6A0", "#C6B0F2", "#93D3DD", "#F0ABCD", "#F6C28E", "#D2DE92"]),
-    ("soft", "Soft", ["#4E6FAE", "#4E8B6B", "#B5524F", "#7D62AE", "#3F8C99", "#A85A85", "#C07A3E", "#7F8C3F"]),
-    ("vivid", "Vivid", ["#2D5BE3", "#13915F", "#D03A3A", "#7B3FE4", "#0E8AA0", "#C93782", "#DD6B20", "#5E9E1E"]),
+    ("vivid", "Vivid", ["#F72585", "#7209B7", "#3A0CA3", "#4361EE", "#4CC9F0"]),
+    ("pastel", "Pastel", ["#CDB4DB", "#FFC8DD", "#FFAFCC", "#BDE0FE", "#A2D2FF"]),
 ]
 let home = URL(fileURLWithPath: ProcessInfo.processInfo.environment["HOME"] ?? NSHomeDirectory())
 let stateDir = home.appendingPathComponent(".cuelight")
@@ -307,10 +306,10 @@ func colorFromHex(_ hex: String) -> NSColor {
 
 let settingsFile = stateDir.appendingPathComponent("settings.json")
 
-/// Palette chosen in the menu (~/.cuelight/settings.json), pastel by default.
+/// Palette chosen in the menu (~/.cuelight/settings.json), vivid by default.
 func currentPalette() -> String {
     let id = readJSON(settingsFile)?["palette"] as? String
-    return palettes.contains { $0.id == id } ? id! : "pastel"
+    return palettes.contains { $0.id == id } ? id! : "vivid"
 }
 
 func setPalette(_ id: String) {
