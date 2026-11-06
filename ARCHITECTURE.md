@@ -14,7 +14,7 @@
                ▼                                       ▼
         ┌──────────────────────── ~/.cuelight/ ────────────────────────┐
         └──────────────────────────────┬───────────────────────────────┘
-                                       │ read every second
+                                       │ read on change
                                        ▼
                              Swift menu bar app
                   one light per open VS Code window, color = hash(name)
@@ -79,7 +79,7 @@ One file per Claude Code or Codex session, written by the hook (the app's binary
   "state": "working",
   "updatedAt": "2026-10-15T11:40:31.204Z",
   "pid": "",
-  "event": { "session_id": "…", "cwd": "/Users/me/Projects/my-app", "hook_event_name": "PreToolUse", "…": "…" }
+  "event": { "session_id": "…", "cwd": "/Users/me/Projects/my-app", "hook_event_name": "PreToolUse" }
 }
 ```
 
@@ -87,7 +87,7 @@ One file per Claude Code or Codex session, written by the hook (the app's binary
 - `updatedAt`: when the hook wrote this `state`.
 - `agent`: `claude` or `codex`.
 - `pid`: the Claude Code process when available through `CLAUDE_PID`. Codex does not expose its host PID to hooks, so Codex records use an empty string and are removed by `SessionEnd` (or after 24 hours as crash recovery).
-- `event`: the last event received, as is. The app reads `cwd` from it.
+- `event`: the last event received, reduced to `session_id`, `cwd` and `hook_event_name` (the full event can carry large tool outputs). The app reads `cwd` from it.
 - Deleted when the session ends (`SessionEnd` hook).
 
 ### `colors.json` (optional)

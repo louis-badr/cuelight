@@ -46,7 +46,9 @@ func runHook(agent: String) -> Never {
     default: exit(0)
     }
 
-    let record: [String: Any] = ["agent": agent, "state": state, "updatedAt": isoFormatter.string(from: Date()), "pid": agent == "claude" ? ProcessInfo.processInfo.environment["CLAUDE_PID"] ?? "" : "", "event": event]
+    let record: [String: Any] = ["agent": agent, "state": state, "updatedAt": isoFormatter.string(from: Date()), "pid": agent == "claude" ? ProcessInfo.processInfo.environment["CLAUDE_PID"] ?? "" : "",
+                                 // Only what the app reads: PostToolUse events can carry large tool outputs.
+                                 "event": event.filter { ["session_id", "cwd", "hook_event_name"].contains($0.key) }]
     try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     if let data = try? JSONSerialization.data(withJSONObject: record) { try? data.write(to: file, options: .atomic) }
     exit(0)
@@ -335,8 +337,10 @@ func colorFor(_ name: String) -> NSColor {
 // macOS adds its own spacing between items.
 let itemWidth: CGFloat = 12
 
-func circleImage(color: NSColor, state: AgentState, angle: CGFloat) -> NSImage {
-    let height: CGFloat = 16, d: CGFloat = 12
+let circleDiameter: CGFloat = 12
+
+func circleImage(color: NSColor, state: AgentState) -> NSImage {
+    let height: CGFloat = 16, d = circleDiameter
     let image = NSImage(size: NSSize(width: itemWidth, height: height), flipped: false) { _ in
         let rect = NSRect(x: (itemWidth - d) / 2, y: (height - d) / 2, width: d, height: d)
         switch state {
@@ -349,14 +353,8 @@ func circleImage(color: NSColor, state: AgentState, angle: CGFloat) -> NSImage {
         case .done:
             color.setFill(); NSBezierPath(ovalIn: rect).fill()
         case .working:
-            // Spinner: tinted disc, with an arc turning around its edge.
+            // Tinted disc; the turning arc is a separate layer (spinnerLayer).
             color.withAlphaComponent(0.3).setFill(); NSBezierPath(ovalIn: rect).fill()
-            let arc = NSBezierPath()
-            arc.appendArc(withCenter: NSPoint(x: rect.midX, y: rect.midY), radius: d / 2 - 1.25,
-                          startAngle: angle, endAngle: angle - 110, clockwise: true)
-            arc.lineWidth = 2.5
-            arc.lineCapStyle = .round
-            color.setStroke(); arc.stroke()
         case .waiting:
             color.setFill(); NSBezierPath(ovalIn: rect).fill()
             NSColor.white.setFill(); NSBezierPath(ovalIn: rect.insetBy(dx: 4, dy: 4)).fill()
@@ -365,6 +363,31 @@ func circleImage(color: NSColor, state: AgentState, angle: CGFloat) -> NSImage {
     }
     image.isTemplate = false
     return image
+}
+
+/// Arc turning around the edge of a working circle. Core Animation spins it in the render server,
+/// so the app doesn't wake up for each frame.
+func spinnerLayer(color: NSColor, in bounds: NSRect, scale: CGFloat) -> CAShapeLayer {
+    let layer = CAShapeLayer()
+    layer.frame = bounds
+    layer.contentsScale = scale
+    let center = CGPoint(x: bounds.midX - bounds.minX, y: bounds.midY - bounds.minY)
+    let path = CGMutablePath()
+    path.addArc(center: center, radius: circleDiameter / 2 - 1.25,
+                startAngle: 0, endAngle: -110 * .pi / 180, clockwise: true)
+    layer.path = path
+    layer.fillColor = nil
+    layer.strokeColor = color.cgColor
+    layer.lineWidth = 2.5
+    layer.lineCap = .round
+    let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+    spin.fromValue = 0
+    spin.toValue = -2 * CGFloat.pi   // clockwise, one turn per second
+    spin.duration = 1
+    spin.repeatCount = .infinity
+    spin.isRemovedOnCompletion = false
+    layer.add(spin, forKey: "spin")
+    return layer
 }
 
 // MARK: - Focus + maximize the VS Code window
@@ -410,7 +433,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var items: [String: NSStatusItem] = [:]
     var windows: [String: ProjectWindow] = [:]
     var states: [String: AgentState] = [:]
-    var tick = 0
+    var colors: [String: NSColor] = [:]        // by window name; cleared when colors.json or settings.json change
+    var images: [String: NSImage] = [:]        // cache: "<color>-<state>"
+    var shown: [String: String] = [:]          // image key currently on each item
+    var spinners: [String: (layer: CAShapeLayer, key: String)] = [:]
+    var watchers: [DispatchSourceFileSystemObject] = []
+    var refreshPending = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         DispatchQueue.global().async { setUp() }
@@ -419,23 +447,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
 
+        // Re-read the state folder when it changes, instead of polling it.
+        for sub in ["windows", "sessions"] {
+            try? FileManager.default.createDirectory(at: stateDir.appendingPathComponent(sub), withIntermediateDirectories: true)
+        }
+        watch(stateDir) { [weak self] in self?.colors = [:] }   // colors.json, settings.json (atomic writes = renames)
+        watch(stateDir.appendingPathComponent("windows"))
+        watch(stateDir.appendingPathComponent("sessions"))
+
         refresh()
-        Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in self?.step() }
+        // Slow fallback: notices dead processes (VS Code or an agent that crashed) and missed events.
+        Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.refresh() }
     }
 
-    /// 30 times a second: animate working circles; every second: re-read the state folder.
-    func step() {
-        tick += 1
-        if tick % 30 == 0 { refresh() } else { redraw(onlyWorking: true) }
+    /// Calls `refresh` when entries in `dir` are added, removed or renamed. Bursts of changes become one refresh.
+    func watch(_ dir: URL, before: (() -> Void)? = nil) {
+        let fd = open(dir.path, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            before?()
+            if self.refreshPending { return }
+            self.refreshPending = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.refreshPending = false
+                self.refresh()
+            }
+        }
+        source.setCancelHandler { close(fd) }
+        source.resume()
+        watchers.append(source)
     }
 
     func refresh() {
         let open = openWindows()
         states = statesByWindow(open)
+        for w in open where colors[w.name] == nil { colors[w.name] = colorFor(w.name) }
         let ids = Set(open.map(\.id))
         for (id, item) in items where !ids.contains(id) {
             NSStatusBar.system.removeStatusItem(item)
             items[id] = nil
+            shown[id] = nil
+            spinners[id] = nil
         }
         windows = [:]
         for w in open {
@@ -446,20 +500,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 item.button?.target = self
                 item.button?.action = #selector(clicked(_:))
                 item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
+                item.button?.wantsLayer = true
                 items[w.id] = item
             }
         }
-        redraw(onlyWorking: false)
+        redraw()
     }
 
-    func redraw(onlyWorking: Bool) {
-        let angle = CGFloat(-(tick * 12) % 360)   // clockwise, one turn per second
+    /// Touches a status item only when its image, spinner or tooltip actually changes.
+    func redraw() {
         for (id, item) in items {
-            guard let w = windows[id] else { continue }
+            guard let w = windows[id], let button = item.button else { continue }
             let state = states[id] ?? AgentState.none
-            if onlyWorking && state != .working { continue }
-            item.button?.image = circleImage(color: colorFor(w.name), state: state, angle: angle)
-            item.button?.toolTip = "\(w.name) · \(state.label)"
+            let color = colors[w.name] ?? colorFor(w.name)
+            let key = "\(color.description)-\(state.rawValue)"
+            if shown[id] != key {
+                if images[key] == nil { images[key] = circleImage(color: color, state: state) }
+                button.image = images[key]
+                shown[id] = key
+            }
+
+            let spinnerKey = state == .working ? "\(color.description)-\(button.bounds)" : nil
+            if spinners[id]?.key != spinnerKey {
+                spinners[id]?.layer.removeFromSuperlayer()
+                spinners[id] = nil
+                if let spinnerKey, let host = button.layer {
+                    let layer = spinnerLayer(color: color, in: button.bounds, scale: button.window?.backingScaleFactor ?? 2)
+                    host.addSublayer(layer)
+                    spinners[id] = (layer, spinnerKey)
+                }
+            }
+
+            let tip = "\(w.name) · \(state.label)"
+            if button.toolTip != tip { button.toolTip = tip }
         }
     }
 
@@ -488,7 +561,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func choosePalette(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         setPalette(id)
-        redraw(onlyWorking: false)
+        colors = [:]
+        refresh()
     }
 }
 

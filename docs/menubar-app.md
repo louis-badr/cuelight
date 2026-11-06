@@ -27,7 +27,7 @@ A plain link in `~/.vscode/extensions` isn't enough: VS Code keeps a registry (`
 |---|---|
 | no agent | empty ring, project color |
 | `idle` | pale disc (project color at 30%): nothing to do |
-| `working` | loading spinner: the pale disc, with an arc turning along its edge (one turn per second, redrawn 30 times a second) |
+| `working` | loading spinner: the pale disc, with an arc turning along its edge (one turn per second, animated by Core Animation so the app doesn't wake up for each frame) |
 | `done` | solid disc, project color: the light is on, a result is waiting to be seen |
 | `waiting` | solid disc with a white dot in the center, to catch the eye |
 
@@ -58,7 +58,8 @@ The palette is saved in `~/.cuelight/settings.json` (see ARCHITECTURE.md). The a
 
 ## Reading the state folder
 
-- Every second, the app re-reads `windows/` and `sessions/`.
+- The app watches `~/.cuelight/`, `windows/` and `sessions/` (`DispatchSource` on the directories: atomic writes show up as renames) and re-reads them when they change, plus every 10 seconds as a fallback that also catches dead processes.
+- Colors are recomputed only when `colors.json` or `settings.json` change.
 - Windows and sessions whose `pid` no longer exists are deleted.
 - An unreadable or incomplete file is skipped and retried on the next pass; the app never crashes on it.
 
