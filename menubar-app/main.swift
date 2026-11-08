@@ -439,6 +439,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var spinners: [String: (layer: CAShapeLayer, key: String)] = [:]
     var watchers: [DispatchSourceFileSystemObject] = []
     var refreshPending = false
+    var groupCheck: DispatchWorkItem?
+    var regrouped = false                      // lights re-created, not seen side by side since
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         DispatchQueue.global().async { setUp() }
@@ -458,6 +460,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refresh()
         // Slow fallback: notices dead processes (VS Code or an agent that crashed) and missed events.
         Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in self?.refresh() }
+
+        // The lights move whenever an icon is added or removed in the menu bar: check they are still side by side.
+        NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.scheduleGroupCheck()
+        }
+    }
+
+    /// Checks the lights once they stop moving (macOS places a new item in several steps).
+    func scheduleGroupCheck() {
+        groupCheck?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.checkGrouping() }
+        groupCheck = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    /// macOS puts a new menu bar icon at the left end of the icons, so an icon added between two lights
+    /// created at different times (another app's, or ours for a window opened later) splits them.
+    /// Re-creating all the lights at once puts them back side by side, at the left end.
+    func checkGrouping() {
+        let frames = items.values.compactMap { $0.button?.window?.frame }.sorted { $0.minX < $1.minX }
+        // x = 0: not placed yet. Different y: moving to another screen. The next move schedules another check.
+        guard frames.count > 1, frames.allSatisfy({ $0.minX != 0 && $0.minY == frames[0].minY }) else { return }
+        let split = zip(frames, frames.dropFirst()).contains { $1.minX - $0.maxX > 2 }
+        if !split { regrouped = false; return }
+        if regrouped { return }   // already tried: don't loop if macOS keeps them apart (crowded menu bar)
+        regrouped = true
+        for item in items.values { NSStatusBar.system.removeStatusItem(item) }
+        items = [:]
+        shown = [:]
+        spinners = [:]
+        refresh()
     }
 
     /// Calls `refresh` when entries in `dir` are added, removed or renamed. Bursts of changes become one refresh.
@@ -496,6 +529,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             windows[w.id] = w
             if items[w.id] == nil {
                 let item = NSStatusBar.system.statusItem(withLength: itemWidth)
+                // A new name every time: macOS puts an item back where an item of the same name was
+                // (after a Cmd-drag, for instance), which can be away from the other lights. An item
+                // with a new name lands at the left end of the icons.
+                item.autosaveName = "light-\(UUID().uuidString)"
                 item.button?.identifier = NSUserInterfaceItemIdentifier(w.id)
                 item.button?.target = self
                 item.button?.action = #selector(clicked(_:))

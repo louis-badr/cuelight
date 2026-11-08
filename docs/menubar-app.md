@@ -7,7 +7,10 @@ Show **one light per open VS Code window**, in the project's color, reflecting t
 ## Shape
 
 - Agent app: no Dock icon, no window (`LSUIElement`).
-- One `NSStatusItem` per file in `~/.cuelight/windows/`, added or removed as those files appear or disappear. Each one is a separate button, 12 pt wide (the size of the light) instead of the standard square width, so the lights take less room. Don't group them into a single item: the whole button gets highlighted and clicks no longer reach the right light (tried and dropped).
+- One `NSStatusItem` per file in `~/.cuelight/windows/`, added or removed as those files appear or disappear. Each one is a separate button, 12 pt wide (the size of the light) instead of the standard square width, so the lights take less room.
+- Don't group them into a single item (tried twice and dropped). Since macOS 27 the system draws the menu bar itself: on a click it highlights the whole item and only calls the item's action, so subviews of the button never get the click and a single light can't be highlighted.
+- Kept side by side: macOS puts a new icon at the left end of the icons, so an icon added between two lights created at different times (another app's, or a light for a window opened later) splits them. Half a second after the lights stop moving (`NSWindow.didMoveNotification`), the app compares the frames of their windows. If there is a gap, it removes all the lights and re-creates them at once, which puts them back side by side at the left end. It tries once until they are seen side by side again, so it can't loop if macOS keeps them apart (crowded menu bar).
+- Each light gets a new `autosaveName` (`light-<UUID>`) when it is created. macOS puts an item back where an item of the same name was (a Cmd-drag position, for instance), which can be away from the other lights; with the default names (`Item-0`, `Item-1`…) re-created lights went back to their old places and stayed split. An item with a new name lands at the left end.
 - Color computed with the algorithm in [color.md](color.md) (same palettes and test vectors as the extension).
 - Started by the VS Code extension when a window opens (`open -g -b com.louisbadr.cuelight`), not at login.
 - The same binary is the Claude Code and Codex hook (`Cuelight hook <agent>`, see [claude-hooks.md](claude-hooks.md) and [codex-hooks.md](codex-hooks.md)).
