@@ -10,7 +10,7 @@ Each light shows the most urgent agent state in its project:
 
 ![Light states: no agent, idle, working, done, needs you](assets/states.png)
 
-Click a light to bring its VS Code window to the front and fill the screen. Right-click for the palette and Quit.
+Click a light to bring its VS Code window to the front and fill the screen. Right-click for the palette, a sound when an agent is done (each project has its own chime) and Quit.
 
 ## Supported agents
 

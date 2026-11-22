@@ -103,10 +103,11 @@ Forces a project's color when two projects land on the same one. Read by the ext
 Settings chosen in the app's menu (right-click on a light). Written by the app, read by the extension **and** the app. Missing = defaults.
 
 ```json
-{ "palette": "vivid" }
+{ "palette": "vivid", "sound": true }
 ```
 
 - `palette` ∈ `vivid` | `pastel` (default `vivid`, also used for unknown values, such as the former `soft`). See [docs/color.md](docs/color.md).
+- `sound`: play a short chime when an agent finishes its turn and the result isn't seen yet (default `false`). Read only by the app; the extension ignores it. See [docs/menubar-app.md](docs/menubar-app.md).
 - The extension watches this file and recolors the title bar when it changes.
 
 ## Install and launch

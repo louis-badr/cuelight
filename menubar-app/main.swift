@@ -263,8 +263,10 @@ func openWindows() -> [ProjectWindow] {
 }
 
 /// Most urgent agent state per window id. A session belongs to the window whose path is its cwd's longest prefix.
-func statesByWindow(_ windows: [ProjectWindow]) -> [String: AgentState] {
+/// `unseenDone`: the turns that ended and weren't seen yet, "<session file>@<updatedAt>" → window id (for the sound).
+func statesByWindow(_ windows: [ProjectWindow]) -> (states: [String: AgentState], unseenDone: [String: String]) {
     var states: [String: AgentState] = [:]
+    var unseenDone: [String: String] = [:]
     for url in jsonFiles("sessions") {
         guard let json = readJSON(url),
               let event = json["event"] as? [String: Any],
@@ -291,10 +293,11 @@ func statesByWindow(_ windows: [ProjectWindow]) -> [String: AgentState] {
         if state == .done, let owner {
             let doneAt = (json["updatedAt"] as? String).flatMap(isoFormatter.date(from:)) ?? .distantPast
             if owner.focused || (owner.lastFocusedAt.map { $0 >= doneAt } ?? false) { state = .idle }
+            else { unseenDone["\(url.lastPathComponent)@\(json["updatedAt"] as? String ?? "")"] = owner.id }
         }
         if let owner, state.rawValue > (states[owner.id]?.rawValue ?? 0) { states[owner.id] = state }
     }
-    return states
+    return (states, unseenDone)
 }
 
 // MARK: - Colors
@@ -314,12 +317,16 @@ func currentPalette() -> String {
     return palettes.contains { $0.id == id } ? id! : "vivid"
 }
 
-func setPalette(_ id: String) {
+/// Changes one key of ~/.cuelight/settings.json, keeping the others.
+func setSetting(_ key: String, _ value: Any) {
     var settings = readJSON(settingsFile) ?? [:]
-    settings["palette"] = id
+    settings[key] = value
     try? FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
     if let data = try? JSONSerialization.data(withJSONObject: settings) { try? data.write(to: settingsFile, options: .atomic) }
 }
+
+/// Chime when an agent finishes (settings.json "sound"), off by default.
+func soundEnabled() -> Bool { readJSON(settingsFile)?["sound"] as? Bool ?? false }
 
 func colorFor(_ name: String) -> NSColor {
     if let overrides = readJSON(stateDir.appendingPathComponent("colors.json")), let hex = overrides[name] as? String {
@@ -329,6 +336,44 @@ func colorFor(_ name: String) -> NSColor {
     let hash = Array(SHA256.hash(data: Data(name.utf8)))
     let n = UInt32(hash[0]) << 24 | UInt32(hash[1]) << 16 | UInt32(hash[2]) << 8 | UInt32(hash[3])
     return colorFromHex(colors[Int(n % UInt32(colors.count))])
+}
+
+// MARK: - Sound
+
+/// A two-note chime that depends on the project name: the first note and the interval to the second
+/// come from bytes 4 and 5 of the name's SHA-256 (the color uses bytes 0-3, so two projects with the
+/// same color usually sound different). Synthesized as a WAV in memory, no sound files.
+func chimeSound(for name: String) -> NSSound? {
+    let hash = Array(SHA256.hash(data: Data(name.utf8)))
+    let roots = [72, 74, 76, 79, 81, 84, 86, 88]   // C major pentatonic, C5 to E6 (MIDI numbers)
+    let intervals = [4, 5, 7, -5]                  // up a third, a fourth, a fifth, down a fourth
+    let first = roots[Int(hash[4]) % roots.count]
+    let notes = [first, first + intervals[Int(hash[5]) % intervals.count]]
+
+    let rate = 44_100, noteLength = 0.22, gap = 0.11
+    var samples = [Float](repeating: 0, count: Int((gap + noteLength) * Double(rate)))
+    for (i, note) in notes.enumerated() {
+        let freq = 440 * pow(2, Double(note - 69) / 12)
+        let start = Int(Double(i) * gap * Double(rate))
+        for n in 0..<Int(noteLength * Double(rate)) {
+            let t = Double(n) / Double(rate)
+            let envelope = min(t / 0.005, 1) * exp(-t * 14) * min((noteLength - t) / 0.01, 1)   // no clicks
+            let tone = sin(2 * .pi * freq * t) + 0.25 * sin(4 * .pi * freq * t)                // bell-ish
+            samples[start + n] += Float(envelope * tone * 0.3)
+        }
+    }
+
+    var wav = Data()
+    func append<T>(_ value: T) { withUnsafeBytes(of: value) { wav.append(contentsOf: $0) } }
+    let dataSize = UInt32(samples.count * 2)
+    wav.append(contentsOf: Array("RIFF".utf8)); append(UInt32(36 + dataSize).littleEndian)
+    wav.append(contentsOf: Array("WAVEfmt ".utf8)); append(UInt32(16).littleEndian)
+    append(UInt16(1).littleEndian); append(UInt16(1).littleEndian)               // PCM, mono
+    append(UInt32(rate).littleEndian); append(UInt32(rate * 2).littleEndian)     // sample rate, byte rate
+    append(UInt16(2).littleEndian); append(UInt16(16).littleEndian)              // block align, 16 bits
+    wav.append(contentsOf: Array("data".utf8)); append(dataSize.littleEndian)
+    for s in samples { append(Int16(max(-1, min(1, s)) * Float(Int16.max)).littleEndian) }
+    return NSSound(data: wav)
 }
 
 // MARK: - Drawing
@@ -441,6 +486,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var refreshPending = false
     var groupCheck: DispatchWorkItem?
     var regrouped = false                      // lights re-created, not seen side by side since
+    var unseenDone: Set<String>?               // turns ended and not seen at the last refresh (nil before the first)
+    var sounds: [String: NSSound] = [:]        // by window name, kept alive so they play to the end
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         DispatchQueue.global().async { setUp() }
@@ -515,7 +562,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func refresh() {
         let open = openWindows()
-        states = statesByWindow(open)
+        let result = statesByWindow(open)
+        states = result.states
+        chimeForNewResults(result.unseenDone, names: Dictionary(open.map { ($0.id, $0.name) }) { a, _ in a })
         for w in open where colors[w.name] == nil { colors[w.name] = colorFor(w.name) }
         let ids = Set(open.map(\.id))
         for (id, item) in items where !ids.contains(id) {
@@ -542,6 +591,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         redraw()
+    }
+
+    /// Plays the project's chime once per window for each turn that ended since the last refresh and isn't seen yet.
+    /// Nothing at launch: results already waiting then were announced before.
+    func chimeForNewResults(_ current: [String: String], names: [String: String]) {
+        let previous = unseenDone
+        unseenDone = Set(current.keys)
+        guard let previous, soundEnabled() else { return }
+        let windowIDs = Set(current.filter { !previous.contains($0.key) }.values)
+        for id in windowIDs {
+            guard let name = names[id] else { continue }
+            if sounds[name] == nil { sounds[name] = chimeSound(for: name) }
+            sounds[name]?.stop()
+            sounds[name]?.play()
+        }
     }
 
     /// Touches a status item only when its image, spinner or tooltip actually changes.
@@ -587,6 +651,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 entry.state = p.id == currentPalette() ? .on : .off
             }
             menu.addItem(withTitle: "Palette", action: nil, keyEquivalent: "").submenu = paletteMenu
+            let sound = menu.addItem(withTitle: "Sound When Done", action: #selector(toggleSound(_:)), keyEquivalent: "")
+            sound.target = self
+            sound.representedObject = w.name
+            sound.state = soundEnabled() ? .on : .off
             menu.addItem(.separator())
             menu.addItem(withTitle: "Quit Cuelight", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
             menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
@@ -597,9 +665,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func choosePalette(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
-        setPalette(id)
+        setSetting("palette", id)
         colors = [:]
         refresh()
+    }
+
+    @objc func toggleSound(_ sender: NSMenuItem) {
+        let on = !soundEnabled()
+        setSetting("sound", on)
+        // Turning it on plays this light's chime, so you hear what it sounds like.
+        if on, let name = sender.representedObject as? String {
+            if sounds[name] == nil { sounds[name] = chimeSound(for: name) }
+            sounds[name]?.play()
+        }
     }
 }
 
