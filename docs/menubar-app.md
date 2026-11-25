@@ -68,7 +68,7 @@ With **Sound When Done** checked (off by default), the app plays a short chime w
 - Only for unseen results, with the same rule as the `done` light: no chime if the window has the focus (an Esc in the window you are looking at stays silent).
 - Each result chimes once: the app remembers the `<session file>@<updatedAt>` pairs of unseen results from one pass to the next and only chimes for new ones. Nothing plays at launch for results already waiting.
 - At most one chime per window per pass, even if several sessions end together.
-- Each project has its own chime: two notes, the first from a C major pentatonic scale (C5 to E6), the second a third, a fourth or a fifth up, or a fourth down. They come from bytes 4 and 5 of the SHA-256 of the project name (the color uses bytes 0-3, so two projects with the same color usually sound different). The sound is synthesized as a WAV in memory and played with `NSSound`; there are no sound files.
+- Each project has its own chime: three rising notes that always make a major chord (the major third is what makes it sound cheerful; a fifth or an octave alone sounds neutral). The first note is between F4 and F5, and the chord is one of four shapes: root position, two inversions and an open voicing. They come from bytes 4 and 5 of the SHA-256 of the project name (the color uses bytes 0-3, so two projects with the same color usually sound different). The sound is synthesized as a WAV in memory and played with `NSSound`; there are no sound files.
 
 ## Reading the state folder
 

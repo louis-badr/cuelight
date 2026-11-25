@@ -340,18 +340,19 @@ func colorFor(_ name: String) -> NSColor {
 
 // MARK: - Sound
 
-/// A two-note chime that depends on the project name: the first note and the interval to the second
-/// come from bytes 4 and 5 of the name's SHA-256 (the color uses bytes 0-3, so two projects with the
+/// A three-note rising major chime that depends on the project name: the first note and the shape of the
+/// chord come from bytes 4 and 5 of the name's SHA-256 (the color uses bytes 0-3, so two projects with the
 /// same color usually sound different). Synthesized as a WAV in memory, no sound files.
 func chimeSound(for name: String) -> NSSound? {
     let hash = Array(SHA256.hash(data: Data(name.utf8)))
-    let roots = [72, 74, 76, 79, 81, 84, 86, 88]   // C major pentatonic, C5 to E6 (MIDI numbers)
-    let intervals = [4, 5, 7, -5]                  // up a third, a fourth, a fifth, down a fourth
+    let roots = [65, 67, 69, 70, 72, 74, 76, 77]   // F4 to F5 (MIDI numbers)
+    // Always rising, always a major chord (the major third is what makes it sound cheerful).
+    let shapes = [[0, 4, 7], [0, 3, 8], [0, 5, 9], [0, 7, 16]]   // root position, 1st and 2nd inversions, open
     let first = roots[Int(hash[4]) % roots.count]
-    let notes = [first, first + intervals[Int(hash[5]) % intervals.count]]
+    let notes = shapes[Int(hash[5]) % shapes.count].map { first + $0 }
 
-    let rate = 44_100, noteLength = 0.22, gap = 0.11
-    var samples = [Float](repeating: 0, count: Int((gap + noteLength) * Double(rate)))
+    let rate = 44_100, noteLength = 0.22, gap = 0.09
+    var samples = [Float](repeating: 0, count: Int((gap * Double(notes.count - 1) + noteLength) * Double(rate)))
     for (i, note) in notes.enumerated() {
         let freq = 440 * pow(2, Double(note - 69) / 12)
         let start = Int(Double(i) * gap * Double(rate))
@@ -359,7 +360,7 @@ func chimeSound(for name: String) -> NSSound? {
             let t = Double(n) / Double(rate)
             let envelope = min(t / 0.005, 1) * exp(-t * 14) * min((noteLength - t) / 0.01, 1)   // no clicks
             let tone = sin(2 * .pi * freq * t) + 0.25 * sin(4 * .pi * freq * t)                // bell-ish
-            samples[start + n] += Float(envelope * tone * 0.3)
+            samples[start + n] += Float(envelope * tone * 0.25)
         }
     }
 
